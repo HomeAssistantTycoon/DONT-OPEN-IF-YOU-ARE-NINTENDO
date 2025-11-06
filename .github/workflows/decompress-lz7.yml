@@ -1,52 +1,36 @@
-name: Decompress LZ7 and Extract Contents
+name: Decompress .lz7 to output folder
 
 on:
   workflow_dispatch:
 
 jobs:
-  decompress_and_extract:
+  decompress:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Create output folder
-        run: mkdir -p output
+      - name: Create tools folder
+        run: mkdir -p tools
 
-      - name: Download SZS Tools
+      - name: Download SZS tools
         run: |
-          mkdir -p tools
           wget https://szs.wiimm.de/download/szs-v2.42a-r8989-x86_64.tar.gz -O tools/szs-tools.tar.gz
           tar -xzf tools/szs-tools.tar.gz -C tools
           chmod +x tools/wszst
 
-      - name: Decompress LZ7 file
+      - name: Create output folder
+        run: mkdir -p output
+
+      - name: Decompress .lz7 to .arc
         run: |
-          # Replace input_file.lz7 with the path to your LZ7 file
-          INPUT_FILE="input_file.lz7"
-          DECOMP_FILE="output/decompressed_file"
+          INPUT_FILE="input/wwwlib-rvl.lz7"
+          BASENAME=$(basename "$INPUT_FILE" .lz7)
+          OUTPUT_FILE="output/${BASENAME}.arc"
+          tools/wszst /u "$INPUT_FILE" "$OUTPUT_FILE"
 
-          # Decompress LZ7 to a file (wszst automatically chooses LZ method)
-          ./tools/wszst lz7 x "$INPUT_FILE" -o "$DECOMP_FILE"
-
-          # Detect file type (SZS or ARC)
-          FILE_HEADER=$(head -c 4 "$DECOMP_FILE" | xxd -p)
-
-          if [[ "$FILE_HEADER" == "53435a00" ]]; then
-              echo "Detected SZS file, extracting..."
-              ./tools/wszst szs x "$DECOMP_FILE" -o output/
-          elif [[ "$FILE_HEADER" == "41524300" ]]; then
-              echo "Detected ARC file, extracting..."
-              ./tools/wszst arc x "$DECOMP_FILE" -o output/
-          else
-              echo "Unknown file type, saved decompressed file as-is."
-              mv "$DECOMP_FILE" "output/"
-          fi
-
-      - name: Commit output folder to repo
+      - name: Extract .arc/.szs into output
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add output/
-          git commit -m "Add decompressed and extracted files from LZ7"
-          git push
+          INPUT_FILE="output/wwwlib-rvl.arc"
+          tools/wszst /x "$INPUT_FILE" "output"
