@@ -1,59 +1,52 @@
-name: Decompress Wii .lz7 and nested archives
+name: Decompress LZ7 and Extract Contents
 
 on:
   workflow_dispatch:
-    inputs:
-      file_name:
-        description: "Name of the .lz7 file in /input"
-        required: true
-        default: "wwwlib-rvl.lz7"
 
 jobs:
-  decompress:
+  decompress_and_extract:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Prepare folders
+      - name: Create output folder
+        run: mkdir -p output
+
+      - name: Download SZS Tools
         run: |
-          mkdir -p input output tools
+          mkdir -p tools
+          wget https://szs.wiimm.de/download/szs-v2.42a-r8989-x86_64.tar.gz -O tools/szs-tools.tar.gz
+          tar -xzf tools/szs-tools.tar.gz -C tools
+          chmod +x tools/wszst
 
-      - name: Download Wiimms SZS Tools
+      - name: Decompress LZ7 file
         run: |
-          wget https://szs.wiimm.de/download/szs-tools.zip -O tools/szs-tools.zip
-          unzip -q tools/szs-tools.zip -d tools/
-          chmod +x tools/wszst tools/wimgt tools/wbmgt tools/wlect tools/wstrt || true
+          # Replace input_file.lz7 with the path to your LZ7 file
+          INPUT_FILE="input_file.lz7"
+          DECOMP_FILE="output/decompressed_file"
 
-      - name: Decompress .lz7 file
+          # Decompress LZ7 to a file (wszst automatically chooses LZ method)
+          ./tools/wszst lz7 x "$INPUT_FILE" -o "$DECOMP_FILE"
+
+          # Detect file type (SZS or ARC)
+          FILE_HEADER=$(head -c 4 "$DECOMP_FILE" | xxd -p)
+
+          if [[ "$FILE_HEADER" == "53435a00" ]]; then
+              echo "Detected SZS file, extracting..."
+              ./tools/wszst szs x "$DECOMP_FILE" -o output/
+          elif [[ "$FILE_HEADER" == "41524300" ]]; then
+              echo "Detected ARC file, extracting..."
+              ./tools/wszst arc x "$DECOMP_FILE" -o output/
+          else
+              echo "Unknown file type, saved decompressed file as-is."
+              mv "$DECOMP_FILE" "output/"
+          fi
+
+      - name: Commit output folder to repo
         run: |
-          FILE="input/${{ github.event.inputs.file_name }}"
-          BASENAME=$(basename "$FILE" .lz7)
-          OUT_DIR="output/${BASENAME}"
-          mkdir -p "$OUT_DIR"
-
-          echo "Attempting to decompress $FILE..."
-          DECOMP_FILE="$OUT_DIR/${BASENAME}.decompressed"
-          tools/wszst x "$FILE" --dest "$OUT_DIR" --decode --verbose || echo "Initial wszst extraction may not fully support this format."
-
-          # Check if the output contains a .arc or .szs file for further extraction
-          for f in "$OUT_DIR"/*; do
-            if [[ "$f" == *.arc ]] || [[ "$f" == *.szs ]]; then
-              echo "Found nested archive $f, extracting..."
-              tools/wszst x "$f" --dest "$OUT_DIR" --decode --verbose || echo "Nested extraction failed for $f"
-            fi
-          done
-
-          echo "Final output folder contents:"
-          ls -R "$OUT_DIR" || echo "No files were extracted."
-
-      - name: Commit and push extracted files
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add output/
-          git commit -m "Decompressed ${{ github.event.inputs.file_name }} with wszst" || echo "No changes to commit"
+          git commit -m "Add decompressed and extracted files from LZ7"
           git push
