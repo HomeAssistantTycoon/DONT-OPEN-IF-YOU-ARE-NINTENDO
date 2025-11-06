@@ -1,51 +1,44 @@
-name: Decompress LZ7 to Output
+name: LZ7 → SZS/ARC Extract
 
 on:
-  workflow_dispatch:   # Allows manual run
+  workflow_dispatch:            # Manual trigger [oai_citation:14‡docs.github.com](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#:~:text=When%20a%20workflow%20is%20configured,CLI%2C%20or%20the%20REST%20API)
 
 jobs:
-  decompress:
-    runs-on: ubuntu-latest
+  extract:
+    runs-on: ubuntu-latest      # GitHub-hosted Ubuntu runner
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v3
 
-      - name: Create necessary folders
+      - name: Download Wiimm SZS Tools
         run: |
-          mkdir -p tools
-          mkdir -p input
+          wget https://szs.wiimm.de/szs-v2.42a-r8989-x86_64.tar.gz
+          tar -xzf szs-v2.42a-r8989-x86_64.tar.gz
+          sudo cp szs-v2.42a-r8989/bin/* /usr/local/bin/
+
+      - name: Setup Python tools
+        run: pip install ndspy
+
+      - name: Decompress LZ7 (LZ10)
+        run: |
+          mkdir -p decompressed
+          python3 -m ndspy.lz10 decompress path/to/input.lz7 decompressed/output.bin \
+            || { echo "Error: Decompression failed" >&2; exit 1; }
+
+      - name: Check archive format
+        run: |
+          FILE=decompressed/output.bin
+          magic=$(head -c4 "$FILE")
+          if [[ "$magic" != "Yaz0" && "$magic" != "RARC" ]]; then
+            echo "Error: File is not SZS or RARC (magic=$magic)." >&2
+            exit 1
+          fi
+
+      - name: Extract contents
+        run: |
           mkdir -p output
-
-      - name: Download LZ7 file
-        run: |
-          # Place your LZ7 in the input folder or adjust the path
-          echo "Make sure wwwlib-rvl.lz7 is in input/ folder"
-
-      - name: Download and extract SZS tools
-        run: |
-          wget https://szs.wiimm.de/download/szs-v2.42a-r8989-x86_64.tar.gz -O tools/szs-tools.tar.gz
-          tar -xzf tools/szs-tools.tar.gz -C tools
-          # find the extracted folder
-          SZS_DIR=$(find tools -maxdepth 1 -type d -name "szs-*")
-          chmod +x "$SZS_DIR/wszst"
-          echo "SZS_DIR=$SZS_DIR" >> $GITHUB_ENV
-
-      - name: Decompress .lz7 to .arc
-        run: |
-          INPUT_FILE="input/wwwlib-rvl.lz7"
-          BASENAME=$(basename "$INPUT_FILE" .lz7)
-          OUTPUT_FILE="output/${BASENAME}.arc"
-          echo "Decompressing $INPUT_FILE -> $OUTPUT_FILE"
-          $SZS_DIR/wszst /u "$INPUT_FILE" "$OUTPUT_FILE"
-
-      - name: Extract .arc/.szs into output folder
-        run: |
-          ARC_FILE="output/wwwlib-rvl.arc"
-          echo "Extracting $ARC_FILE into output/"
-          $SZS_DIR/wszst /x "$ARC_FILE" "output"
+          wszst extract decompressed/output.bin -D output
 
       - name: List output files
-        run: |
-          echo "Files extracted to output/:"
-          ls -l output
+        run: ls -R output
