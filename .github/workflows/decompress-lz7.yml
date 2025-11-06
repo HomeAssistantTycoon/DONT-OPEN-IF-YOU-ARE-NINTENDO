@@ -1,0 +1,59 @@
+name: Decompress Wii .lz7 and nested archives
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_name:
+        description: "Name of the .lz7 file in /input"
+        required: true
+        default: "wwwlib-rvl.lz7"
+
+jobs:
+  decompress:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare folders
+        run: |
+          mkdir -p input output tools
+
+      - name: Download Wiimms SZS Tools
+        run: |
+          wget https://szs.wiimm.de/download/szs-tools.zip -O tools/szs-tools.zip
+          unzip -q tools/szs-tools.zip -d tools/
+          chmod +x tools/wszst tools/wimgt tools/wbmgt tools/wlect tools/wstrt || true
+
+      - name: Decompress .lz7 file
+        run: |
+          FILE="input/${{ github.event.inputs.file_name }}"
+          BASENAME=$(basename "$FILE" .lz7)
+          OUT_DIR="output/${BASENAME}"
+          mkdir -p "$OUT_DIR"
+
+          echo "Attempting to decompress $FILE..."
+          DECOMP_FILE="$OUT_DIR/${BASENAME}.decompressed"
+          tools/wszst x "$FILE" --dest "$OUT_DIR" --decode --verbose || echo "Initial wszst extraction may not fully support this format."
+
+          # Check if the output contains a .arc or .szs file for further extraction
+          for f in "$OUT_DIR"/*; do
+            if [[ "$f" == *.arc ]] || [[ "$f" == *.szs ]]; then
+              echo "Found nested archive $f, extracting..."
+              tools/wszst x "$f" --dest "$OUT_DIR" --decode --verbose || echo "Nested extraction failed for $f"
+            fi
+          done
+
+          echo "Final output folder contents:"
+          ls -R "$OUT_DIR" || echo "No files were extracted."
+
+      - name: Commit and push extracted files
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add output/
+          git commit -m "Decompressed ${{ github.event.inputs.file_name }} with wszst" || echo "No changes to commit"
+          git push
